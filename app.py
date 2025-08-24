@@ -60,7 +60,7 @@ class ResNet9(nn.Module):
         return out
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-WEIGHTS_PATH = "plant-disease-model (1).pth"  # state_dict .pth in repo
+WEIGHTS_PATH = "plant-disease-model.pth"  # state_dict .pth in repo
 
 
 def _strip_module_prefix(state_dict: Dict[str, Any]) -> Dict[str, Any]:
