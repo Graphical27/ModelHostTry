@@ -109,6 +109,7 @@ app.add_middleware(
 )
 
 
+
 TRANSFORM = transforms.Compose([
     transforms.Resize((256, 256)),
     transforms.ToTensor(),
