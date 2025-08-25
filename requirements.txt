@@ -1,9 +1,8 @@
+ultralytics
+fastapi
+uvicorn
 torch
 torchvision
-uvicorn
-fastapi
-pillow
-pandas
-numpy
-ultralytics
+Pillow
 python-multipart
+gunicorn
