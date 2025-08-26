@@ -9,9 +9,10 @@ import json
 from pathlib import Path
 from fastapi.middleware.cors import CORSMiddleware
 
-MODEL_PATH = 'crop_yield_pipeline_latest.joblib'  
-RESID_STATS = 'residual_stats.json'                
-META = 'model_metadata.json'
+MODEL_PATH = 'outputs/crop_yield_pipeline_latest.joblib'
+RESID_STATS = 'outputs/residual_stats.json'
+META = 'outputs/model_metadata.json'
+
 
 app = FastAPI(title="Crop Yield Prediction API")
 
