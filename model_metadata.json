@@ -1,0 +1,17 @@
+{
+  "created_at": "20250826T055342Z",
+  "model_file": "crop_yield_pipeline_20250826T055342Z.joblib",
+  "model_type": "RandomForestRegressor",
+  "estimator_step_name": "model",
+  "features": [
+    "Crop",
+    "Crop_Year",
+    "Season",
+    "State",
+    "Area",
+    "Annual_Rainfall",
+    "Fertilizer",
+    "Pesticide"
+  ],
+  "target": "Yield"
+}

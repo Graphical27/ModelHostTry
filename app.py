@@ -1,144 +1,94 @@
-from fastapi import FastAPI, File, UploadFile
+# app.py
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
+from typing import Optional
+import joblib
+import numpy as np
+import pandas as pd
+import json
+from pathlib import Path
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image
-import io
-import torch
-import torch.nn as nn
-import torchvision.transforms as transforms
-from typing import Dict, Any
 
-CLASSES = [
-    'Apple___Apple_scab', 'Apple___Black_rot', 'Apple___Cedar_apple_rust', 'Apple___healthy',
-    'Blueberry___healthy', 'Cherry_(including_sour)___Powdery_mildew', 'Cherry_(including_sour)___healthy',
-    'Corn_(maize)___Cercospora_leaf_spot Gray_leaf_spot', 'Corn_(maize)___Common_rust_',
-    'Corn_(maize)___Northern_Leaf_Blight', 'Corn_(maize)___healthy', 'Grape___Black_rot',
-    'Grape___Esca_(Black_Measles)', 'Grape___Leaf_blight_(Isariopsis_Leaf_Spot)', 'Grape___healthy',
-    'Orange___Haunglongbing_(Citrus_greening)', 'Peach___Bacterial_spot', 'Peach___healthy',
-    'Pepper,_bell___Bacterial_spot', 'Pepper,_bell___healthy', 'Potato___Early_blight',
-    'Potato___Late_blight', 'Potato___healthy', 'Raspberry___healthy', 'Soybean___healthy',
-    'Squash___Powdery_mildew', 'Strawberry___Leaf_scorch', 'Strawberry___healthy', 'Tomato___Bacterial_spot',
-    'Tomato___Early_blight', 'Tomato___Late_blight', 'Tomato___Leaf_Mold', 'Tomato___Septoria_leaf_spot',
-    'Tomato___Spider_mites Two-spotted_spider_mite', 'Tomato___Target_Spot',
-    'Tomato___Tomato_Yellow_Leaf_Curl_Virus', 'Tomato___Tomato_mosaic_virus', 'Tomato___healthy'
-]
-NUM_CLASSES = len(CLASSES)
+MODEL_PATH = 'crop_yield_pipeline_latest.joblib'  
+RESID_STATS = 'residual_stats.json'                
+META = 'model_metadata.json'
 
-def ConvBlock(in_channels: int, out_channels: int, pool: bool = False) -> nn.Sequential:
-    layers = [
-        nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
-        nn.BatchNorm2d(out_channels),
-        nn.ReLU(inplace=True),
-    ]
-    if pool:
-        layers.append(nn.MaxPool2d(4))
-    return nn.Sequential(*layers)
+app = FastAPI(title="Crop Yield Prediction API")
 
-
-class ResNet9(nn.Module):
-    def __init__(self, in_channels: int, num_diseases: int):
-        super().__init__()
-        self.conv1 = ConvBlock(in_channels, 64)
-        self.conv2 = ConvBlock(64, 128, pool=True)
-        self.res1 = nn.Sequential(ConvBlock(128, 128), ConvBlock(128, 128))
-        self.conv3 = ConvBlock(128, 256, pool=True)
-        self.conv4 = ConvBlock(256, 512, pool=True)
-        self.res2 = nn.Sequential(ConvBlock(512, 512), ConvBlock(512, 512))
-        self.classifier = nn.Sequential(
-            nn.MaxPool2d(4),
-            nn.Flatten(),
-            nn.Linear(512, num_diseases),
-        )
-
-    def forward(self, xb: torch.Tensor) -> torch.Tensor:
-        out = self.conv1(xb)
-        out = self.conv2(out)
-        out = self.res1(out) + out
-        out = self.conv3(out)
-        out = self.conv4(out)
-        out = self.res2(out) + out
-        out = self.classifier(out)
-        return out
-
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-WEIGHTS_PATH = "plant-disease-model.pth"  # state_dict .pth in repo
-
-
-def _strip_module_prefix(state_dict: Dict[str, Any]) -> Dict[str, Any]:
-    if not any(k.startswith("module.") for k in state_dict.keys()):
-        return state_dict
-    return {k.replace("module.", "", 1): v for k, v in state_dict.items()}
-
-
-def load_model(weights_path: str, device: torch.device) -> nn.Module:
-    model = ResNet9(in_channels=3, num_diseases=NUM_CLASSES).to(device)
-
-    obj = torch.load(weights_path, map_location=device)
-    if isinstance(obj, nn.Module):
-        model = obj.to(device)
-        model.eval()
-        return model
-
-    if isinstance(obj, dict) and "state_dict" in obj:
-        state_dict = obj["state_dict"]
-    elif isinstance(obj, dict):
-        state_dict = obj
-    else:
-        raise RuntimeError("Unsupported checkpoint format. Expected state_dict or nn.Module.")
-
-    state_dict = _strip_module_prefix(state_dict)
-
-    try:
-        model.load_state_dict(state_dict, strict=True)
-    except Exception:
-        model.load_state_dict(state_dict, strict=False)
-
-    model.eval()
-    return model
-
-
-MODEL = load_model(WEIGHTS_PATH, DEVICE)
-
-
-app = FastAPI(title="Plant Disease Classification API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
-    allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+@app.on_event("startup")
+def load_model():
+    global pipeline, resid_stats, metadata, estimator, preproc, estimator_step_name
+    pipeline = joblib.load(MODEL_PATH)
+    resid_stats = {}
+    metadata = {}
+    estimator = None
+    preproc = None
+    estimator_step_name = None
+    if Path(RESID_STATS).exists():
+        with open(RESID_STATS, 'r') as f:
+            resid_stats = json.load(f)
+    if Path(META).exists():
+        with open(META, 'r') as f:
+            metadata = json.load(f)
+        estimator_step_name = metadata.get('estimator_step_name')
+    if estimator_step_name is None:
+        for candidate in ('estimator', 'model'):
+            if candidate in pipeline.named_steps:
+                estimator_step_name = candidate
+                break
+        if estimator_step_name is None:
+            estimator_step_name = list(pipeline.named_steps.keys())[-1]
+    estimator = pipeline.named_steps.get(estimator_step_name, None)
+    preproc = pipeline.named_steps.get('preprocessor', None)
 
+class PredictRequest(BaseModel):
+    Crop: str
+    Crop_Year: Optional[int] = None
+    Season: Optional[str] = None
+    State: Optional[str] = None
+    Area: float
+    Annual_Rainfall: Optional[float] = None
+    Fertilizer: Optional[float] = None
+    Pesticide: Optional[float] = None
 
-TRANSFORM = transforms.Compose([
-    transforms.Resize((256, 256)),
-    transforms.ToTensor(),
-])
+class PredictResponse(BaseModel):
+    prediction: float
+    lower_95: float
+    upper_95: float
+    model: Optional[str] = None
 
+@app.post("/predict", response_model=PredictResponse)
+def predict(req: PredictRequest):
+    row = pd.DataFrame([req.dict()])
+    pred = float(pipeline.predict(row)[0])
+
+    if resid_stats and 'resid_std' in resid_stats:
+        resid_std = resid_stats['resid_std']
+        lower = pred - 1.96 * resid_std
+        upper = pred + 1.96 * resid_std
+    else:
+        lower, upper = pred, pred
+    try:
+        if estimator is not None and hasattr(estimator, 'estimators_'):
+            if preproc is not None:
+                X_trans = preproc.transform(row)
+                tree_preds = np.array([t.predict(X_trans) for t in estimator.estimators_])
+                mean_pred = float(np.mean(tree_preds))
+                lower = float(np.percentile(tree_preds, 2.5))
+                upper = float(np.percentile(tree_preds, 97.5))
+                pred = mean_pred
+    except Exception:
+        pass
+
+    return PredictResponse(prediction=float(pred), lower_95=float(lower), upper_95=float(upper), model=metadata.get('model_file'))
 
 @app.get("/health")
-async def health():
-    return {"status": "ok", "device": str(DEVICE), "classes": NUM_CLASSES}
-
-
-@app.post("/predict")
-async def predict(file: UploadFile = File(...)):
-    image_bytes = await file.read()
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    tensor = TRANSFORM(img).unsqueeze(0).to(DEVICE)
-
-    with torch.no_grad():
-        logits = MODEL(tensor)
-        probs = torch.softmax(logits, dim=1)
-        conf, pred_idx = torch.max(probs, dim=1)
-
-    pred_class = CLASSES[pred_idx.item()]
-    return {
-        "class": pred_class,
-        "confidence": float(conf.item()),
-        "index": int(pred_idx.item()),
-    }
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+def health():
+    return {"status": "ok", "model": metadata.get('model_file')}

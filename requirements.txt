@@ -1,8 +1,0 @@
-ultralytics
-fastapi
-uvicorn
-torch
-torchvision
-Pillow
-python-multipart
-gunicorn
