@@ -6,6 +6,8 @@ import joblib
 import numpy as np
 import pandas as pd
 import json
+import os
+import uvicorn
 from pathlib import Path
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -93,3 +95,9 @@ def predict(req: PredictRequest):
 @app.get("/health")
 def health():
     return {"status": "ok", "model": metadata.get('model_file')}
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    # Run the FastAPI app with uvicorn, binding to 0.0.0.0 to accept all incoming connections
+    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=False)
